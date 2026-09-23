@@ -27,6 +27,9 @@ all of it basically instantly.
 # Install a version from https://nodejs.org/dist/
 nvm install 22.12.0
 
+# Remove an installed version (refuses if it is the active version)
+nvm uninstall 22.12.0
+
 # Switch the active version
 nvm use 22.12.0
 

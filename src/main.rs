@@ -330,6 +330,47 @@ fn install_version(version: String) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Removes the installed `version` from `$VERSIONS_DIR/<version>`. Refuses, without changing
+/// anything, if it is the active version that `$CURRENT_DIR` points at.
+fn uninstall_version(version: String) -> anyhow::Result<()> {
+    let version = normalize_version(version.as_str());
+    if version.is_empty() {
+        anyhow::bail!("no version given");
+    }
+
+    // `version` becomes an argument to `remove_dir_all`, so it must name exactly one entry inside
+    // `$VERSIONS_DIR`: something like `..` or `../..` would otherwise delete far more than intended.
+    let mut components = Utf8Path::new(version).components();
+    if !matches!(components.next(), Some(Utf8Component::Normal(_)))
+        || components.next().is_some()
+        || version.starts_with('.')
+    {
+        anyhow::bail!("{version} is not a valid version");
+    }
+
+    let version_dir = VERSIONS_DIR.join(version);
+    if !version_dir.is_dir() {
+        anyhow::bail!("{version} is not installed");
+    }
+
+    if std::fs::read_link(&*CURRENT_DIR).is_ok_and(|target| target == version_dir.as_std_path()) {
+        anyhow::bail!(
+            "{version} is the active version; run `nvm use <version>` to switch to another first"
+        );
+    }
+
+    // Rename out of the way before deleting so an interrupted removal never leaves a partial
+    // directory that `use_version` would mistake for a complete install.
+    let tmp_dir = VERSIONS_DIR.join(format!(".{version}.uninstall.{}", std::process::id()));
+    std::fs::rename(&version_dir, &tmp_dir)
+        .with_context(|| format!("error moving {version_dir} to {tmp_dir}"))?;
+    std::fs::remove_dir_all(&tmp_dir).with_context(|| format!("error removing {tmp_dir}"))?;
+
+    println!("successfully uninstalled {version} from {version_dir}");
+
+    Ok(())
+}
+
 /// Records `name` as an alias for `version` by writing the version into `$ALIASES_DIR/<name>`.
 /// Errors if the version is not installed.
 fn alias_version(version: String, name: String) -> anyhow::Result<()> {
@@ -371,6 +412,11 @@ enum Commands {
         /// The name of a directory at <https://nodejs.org/dist/> that contains a nodejs version.
         version: String,
     },
+    /// Uninstalls a version previously installed with `nvm install`.
+    Uninstall {
+        /// The version to uninstall, using the same syntax as `nvm install` (e.g. "22.12.0").
+        version: String,
+    },
     /// Aliases a specific version (e.g. "22.12.0") to a friendly name (e.g. "default").  The alias
     /// `default` is special, in the sense that nvmrs will use that version as a default when no
     /// other version is provided by `nvm use`.
@@ -383,6 +429,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Use { version } => use_version(version),
         Commands::Install { version } => install_version(version),
+        Commands::Uninstall { version } => uninstall_version(version),
         Commands::Alias { version, name } => alias_version(version, name),
     }
 }
